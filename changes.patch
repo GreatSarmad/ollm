@@ -1,0 +1,1101 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/README.md b/README.md
+index 20bbb6a746468151aaf9aa977efb45a744221e37..fdf9aae9f79d6ce22e61e15f2aa546fd7277f7df 100644
+--- a/README.md
++++ b/README.md
+@@ -1,40 +1,42 @@
+ <!-- markdownlint-disable MD001 MD041 -->
+ <p align="center">
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="https://ollm.s3.us-east-1.amazonaws.com/files/logo2.png">
+     <img alt="vLLM" src="https://ollm.s3.us-east-1.amazonaws.com/files/logo2.png" width=52%>
+   </picture>
+ </p>
+ 
+ <h3 align="center">
+ LLM Inference for Large-Context Offline Workloads
+ </h3>
+ 
+-oLLM is a lightweight Python library for large-context LLM inference, built on top of Huggingface Transformers and PyTorch. It enables running models like [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b), [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) or [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) on 100k context using ~$200 consumer GPU with 8GB VRAM.  No quantization is used—only fp16/bf16 precision. 
+-<p dir="auto"><em>Latest updates (0.5.0)</em> 🔥</p>
++oLLM is a lightweight Python library for large-context LLM inference, built on top of Huggingface Transformers and PyTorch. It enables running models like [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b), [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) or [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) on 100k context using ~$200 consumer GPU with 8GB VRAM.  No quantization is used—only fp16/bf16 precision.
++With 0.6.0, the same streaming/offload machinery now works for diffusion pipelines: large image or video checkpoints can be executed on 8–12 GB cards via CPU and disk orchestration.
++<p dir="auto"><em>Latest updates (0.6.0)</em> 🔥</p>
+ <ul dir="auto">
++<li>Pluggable pipeline runtime with first-class <b>diffusion</b> support (run Stable Diffusion XL or Qwen Image Edit with CPU/disk offload)</li>
+ <li>Multimodal <b>gemma3-12B</b> (image+text) added. <a href="https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py">[sample with image]</a> </li>
+ <li>.safetensor files are now read without `mmap` so they no longer consume RAM through page cache</li>
+ <li>qwen3-next-80B DiskCache support added</li>
+ <li><b>qwen3-next-80B</b> (160GB model) added with <span style="color:blue">⚡️1tok/2s</span> throughput (our fastest model so far)</li>
+ <li>gpt-oss-20B flash-attention-like implementation added to reduce VRAM usage </li>
+ <li>gpt-oss-20B chunked MLP added to reduce VRAM usage </li>
+ </ul>
+ 
+ ---
+ ###  8GB Nvidia 3060 Ti Inference memory usage:
+ 
+ | Model   | Weights | Context length | KV cache |  Baseline VRAM (no offload) | oLLM GPU VRAM | oLLM Disk (SSD) |
+ | ------- | ------- | -------- | ------------- | ------------ | ---------------- | --------------- |
+ | [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) | 160 GB (bf16) | 50k | 20 GB | ~190 GB   | ~7.5 GB | 180 GB  |
+ | [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b) | 13 GB (packed bf16) | 10k | 1.4 GB | ~40 GB   | ~7.3GB | 15 GB  |
+ | [gemma3-12B](https://huggingface.co/google/gemma-3-12b-it)  | 25 GB (bf16) | 50k   | 18.5 GB          | ~45 GB   | ~6.7 GB       | 43 GB  |
+ | [llama3-1B-chat](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct)  | 2 GB (fp16) | 100k   | 12.6 GB          | ~16 GB   | ~5 GB       | 15 GB  |
+ | [llama3-3B-chat](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct)  | 7 GB (fp16) | 100k  | 34.1 GB | ~42 GB   | ~5.3 GB     | 42 GB |
+ | [llama3-8B-chat](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)  | 16 GB (fp16) | 100k  | 52.4 GB | ~71 GB   | ~6.6 GB     | 69 GB  |
+ 
+ <small>By "Baseline" we mean typical inference without any offloading</small>
+ 
+ How do we achieve this:
+ 
+ - Loading layer weights from SSD directly to GPU one by one
+@@ -71,36 +73,89 @@ pip install kvikio-cu{cuda_version} Ex, kvikio-cu12
+ > **qwen3-next** requires 4.57.0.dev version of transformers to be installed as `pip install git+https://github.com/huggingface/transformers.git`
+ 
+ 
+ ## Example
+ 
+ Code snippet sample 
+ 
+ ```bash
+ from ollm import Inference, file_get_contents, TextStreamer
+ o = Inference("llama3-1B-chat", device="cuda:0", logging=True) #llama3-1B/3B/8B-chat, gpt-oss-20B, qwen3-next-80B
+ o.ini_model(models_dir="./models/", force_download=False)
+ o.offload_layers_to_cpu(layers_num=2) #(optional) offload some layers to CPU for speed boost
+ past_key_values = o.DiskCache(cache_dir="./kv_cache/") #set None if context is small
+ text_streamer = TextStreamer(o.tokenizer, skip_prompt=True, skip_special_tokens=False)
+ 
+ messages = [{"role":"system", "content":"You are helpful AI assistant"}, {"role":"user", "content":"List planets"}]
+ input_ids = o.tokenizer.apply_chat_template(messages, reasoning_effort="minimal", tokenize=True, add_generation_prompt=True, return_tensors="pt").to(o.device)
+ outputs = o.model.generate(input_ids=input_ids,  past_key_values=past_key_values, max_new_tokens=500, streamer=text_streamer).cpu()
+ answer = o.tokenizer.decode(outputs[0][input_ids.shape[-1]:], skip_special_tokens=False)
+ print(answer)
+ ```
+ or run sample python script as `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python example.py` 
+ 
+ **More samples**
+ - [gemma3-12B image+text ](https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py)
++- [Stable Diffusion XL / Qwen Image Edit on 8 GB GPUs](samples/run_diffusion.py)
++
++## Diffusion pipelines on small GPUs
++
++The new adapter registry lets you instantiate diffusion pipelines alongside LLMs. To run a public Stable Diffusion XL checkpoint:
++
++```python
++from ollm import Inference
++
++pipe = Inference("sdxl-base-1.0", device="cuda:0")
++pipe.ini_model(models_dir="./models")
++result = pipe.generate(
++    prompt="A cinematic photo of a koala astronaut exploring a neon jungle",
++    num_inference_steps=35,
++    guidance_scale=7.0,
++    output_type="pil",
++)
++result.images[0].save("koala.png")
++```
++
++### Qwen Image Edit (Hugging Face)
++
++`qwen-image-edit` now resolves directly to the official Hugging Face diffusers weights ([Qwen/Qwen-Image-Edit-2509](https://huggingface.co/Qwen/Qwen-Image-Edit-2509)). The adapter streams the 19 GB checkpoint through CPU/disk, keeping runtime VRAM under 9 GB on cards like the RTX 3060.
++
++```python
++from PIL import Image
++
++from ollm import Inference
++
++pipe = Inference("qwen-image-edit", device="cuda:0")
++pipe.ini_model(models_dir="./models")
++
++source_image = Image.open("input.png").convert("RGB")
++result = pipe.generate(
++    prompt="A watercolor skyline at dusk",
++    image=source_image,
++    strength=0.55,
++    num_inference_steps=25,
++    guidance_scale=4.5,
++    output_type="pil",
++)
++result.images[0].save("edited.png")
++```
++
++Need to pull from an alternate mirror (e.g., a private CivitAI ZIP export)? Pass `download_url=...` to `Inference` or set `OLLMDIFF_QWEN_IMAGE_EDIT_URL` before calling `ini_model`—the adapter will extract the archive into `./models/qwen-image-edit` automatically.
++
++Key memory-saving features that activate automatically:
++
++- `enable_sequential_cpu_offload` streams UNet/vae blocks between CPU and GPU, keeping VRAM usage close to 6–8 GB.
++- VAE tiling + attention slicing reduce activation peaks on large (1024x1024) renders.
++- Scheduler overrides and deterministic seeds are exposed through `DiffusionRunner` for reproducibility.
++
++⚠️ CivitAI often distributes diffusers weights as ZIP archives. Ensure the archive contains the diffusers directory structure (`model_index.json`, `unet`, `vae`, etc.). The adapter extracts archives automatically into `./models/qwen-image-edit`.
+ 
+ ## Roadmap
+ *For visibility of what's coming next (subject to change)*
+ - Voxtral-small-24B ASR model coming on Oct 5, Sun
+ - Qwen3-VL or alternative vision model by Oct 12, Sun
+ - Qwen3-Next MultiTokenPrediction in R&D
+ - Efficient weight loading in R&D
+ 
+ 
+ ## Contact us
+ If there’s a model you’d like to see supported, feel free to reach out at anuarsh@ailabs.us—I’ll do my best to make it happen.
+diff --git a/pyproject.toml b/pyproject.toml
+index 9bedb1a64990289540d14bb751bb07bc18cee961..3f9d69ac91e60c817baade6b7c35cae5dd6d9a11 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,32 +1,36 @@
+ [build-system]
+ requires = ["setuptools>=61.0"]
+ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "ollm"
+ version = "0.5.0"
+ description = "LLM Inference for Large-Context Offline Workloads"
+ authors = [
+   { name="Anuar Sharafudinov", email="anuarsh@ailabs.us" }
+ ]
+ readme = "README.md"
+ license = { file="LICENSE" }
+ requires-python = ">=3.10"
+ dependencies = [
+     "numpy",
+     "torch>2.6.0", #tested: 2.8.0
+     "transformers>=4.55.0", #tested: 4.55.4, 4.56.1
+     "accelerate",
+     "flash-attn", #tested: 2.7.4.post1
+-    "flash-linear-attention"
++    "flash-linear-attention",
++    "diffusers>=0.30.0",
++    "safetensors",
++    "huggingface-hub>=0.23.0",
++    "pillow"
+ ]
+ 
+ [project.urls]
+ "Homepage" = "https://github.com/Mega4alik/ollm"
+ "Bug Tracker" = "https://github.com/Mega4alik/ollm/issues"
+ 
+ [tool.setuptools]
+ package-dir = {"" = "src"}
+ 
+ [tool.setuptools.packages.find]
+ where = ["src"]
+diff --git a/samples/run_diffusion.py b/samples/run_diffusion.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..de72fb4e54432c47b3aa256c6119ded2a92cf749
+--- /dev/null
++++ b/samples/run_diffusion.py
+@@ -0,0 +1,87 @@
++"""Minimal diffusion pipeline demo for low-VRAM GPUs."""
++
++import argparse
++from pathlib import Path
++
++from PIL import Image
++
++from ollm import Inference
++
++
++def parse_args() -> argparse.Namespace:
++    parser = argparse.ArgumentParser(description="Run a diffusion pipeline with CPU/disk offload")
++    parser.add_argument("model_id", help="Registered model identifier, e.g. sdxl-base-1.0 or qwen-image-edit")
++    parser.add_argument("prompt", help="Text prompt to render")
++    parser.add_argument("--output", default="output.png", help="Path to the generated image")
++    parser.add_argument("--models-dir", default="./models", help="Directory to cache/download model weights")
++    parser.add_argument("--device", default="cuda:0", help="Torch device (cuda:N or cpu)")
++    parser.add_argument("--num-steps", type=int, default=30, help="Number of diffusion steps")
++    parser.add_argument("--guidance", type=float, default=5.5, help="Classifier-free guidance scale")
++    parser.add_argument("--height", type=int, default=None, help="Output height (defaults to pipeline default)")
++    parser.add_argument("--width", type=int, default=None, help="Output width (defaults to pipeline default)")
++    parser.add_argument("--negative", default=None, help="Negative prompt")
++    parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic outputs")
++    parser.add_argument("--download-url", default=None, help="Override download URL (e.g. CivitAI direct link)")
++    parser.add_argument("--image", default=None, help="Optional init image for img2img/edit pipelines")
++    parser.add_argument("--mask", default=None, help="Optional mask image for inpainting/editing pipelines")
++    parser.add_argument(
++        "--strength",
++        type=float,
++        default=None,
++        help="Denoising strength when using an init image (defaults to pipeline preference)",
++    )
++    return parser.parse_args()
++
++
++def main() -> None:
++    args = parse_args()
++
++    overrides = {}
++    if args.download_url:
++        overrides["download_url"] = args.download_url
++
++    inference = Inference(
++        args.model_id,
++        device=args.device,
++        **overrides,
++    )
++    inference.ini_model(models_dir=args.models_dir)
++
++    image = None
++    if args.image:
++        image = Image.open(args.image)
++        if image.mode != "RGB":
++            image = image.convert("RGB")
++
++    mask_image = None
++    if args.mask:
++        mask_image = Image.open(args.mask)
++        if mask_image.mode not in ("L", "1"):
++            mask_image = mask_image.convert("L")
++
++    strength = args.strength
++    if strength is None and image is not None:
++        strength = 0.55
++
++    result = inference.generate(
++        prompt=args.prompt,
++        negative_prompt=args.negative,
++        num_inference_steps=args.num_steps,
++        guidance_scale=args.guidance,
++        height=args.height,
++        width=args.width,
++        generator=args.seed,
++        output_type="pil",
++        image=image,
++        mask_image=mask_image,
++        strength=strength,
++    )
++
++    output_image = result.images[0]
++    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
++    output_image.save(args.output)
++    print(f"Saved image to {args.output}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/ollm/__init__.py b/src/ollm/__init__.py
+index cef0e740089d7b29cea0934d0f7354c7ebb5c76a..e33e5e4139c130db8762f2f5ca12b4253ae49fac 100644
+--- a/src/ollm/__init__.py
++++ b/src/ollm/__init__.py
+@@ -1,4 +1,7 @@
+-# src/ollm/__init__.py
++"""oLLM public API surface."""
++
+ from .inference import Inference
+ from .utils import file_get_contents
+-from transformers import TextStreamer
+\ No newline at end of file
++from transformers import TextStreamer
++
++__all__ = ["Inference", "file_get_contents", "TextStreamer"]
+diff --git a/src/ollm/inference.py b/src/ollm/inference.py
+index 292d9d39f8422ee6f4fec836ea3adff4026f76e3..dff2f91c54b3ce7f7b452b34450d53d6d177cd73 100644
+--- a/src/ollm/inference.py
++++ b/src/ollm/inference.py
+@@ -1,115 +1,55 @@
+-import os, requests, zipfile
+-import torch
+-from transformers import AutoTokenizer, AutoProcessor
+-from .utils import Stats, file_get_contents
+-from .gds_loader import GDSWeights, MoEWeightsLoader2, Gemma3Loader
+-from .kvcache import KVCache
+-
+-class Inference:
+-	def __init__(self, model_id, device="cuda:0", logging=True, multimodality=False):
+-		self.model_id = model_id
+-		self.device = torch.device(device)
+-		self.multimodality = multimodality
+-		self.stats = Stats() if logging else None
+-
+-	def download_and_unpack(self, models_dir: str):
+-		os.makedirs(models_dir, exist_ok=True)
+-		urls = {
+-			"llama3-1B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-1B-chat.zip",
+-			"llama3-3B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-3B-chat.zip",
+-			"llama3-8B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-8B-chat.zip",
+-			"gpt-oss-20B":    "https://ollm.s3.us-east-1.amazonaws.com/models/gpt-oss-20B.zip"
+-		}
+-		url = urls[self.model_id]
+-		
+-		# Extract filename from URL
+-		filename = url.split("/")[-1]
+-		zip_path = os.path.join(models_dir, filename)
+-
+-		# Download the file
+-		print(f"Downloading {url} ...")
+-		response = requests.get(url, stream=True)
+-		response.raise_for_status()
+-		with open(zip_path, "wb") as f:
+-			for chunk in response.iter_content(chunk_size=8192):
+-				f.write(chunk)
+-		print(f"Downloaded to {zip_path}")
++import os
++from typing import Optional
+ 
+-		# Unzip
+-		print(f"Unpacking {zip_path} ...")
+-		with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+-			zip_ref.extractall(models_dir)
+-		print(f"Unpacked to {models_dir}")
+-
+-		os.remove(zip_path) # Optional: remove the zip file after extraction
+-
+-	
+-	def hf_download(self, model_dir):
+-		from huggingface_hub import snapshot_download
+-		urls = {"qwen3-next-80B": "Qwen/Qwen3-Next-80B-A3B-Instruct", "gemma3-12B":"google/gemma-3-12b-it"}
+-		url = urls[self.model_id]
+-		print(f"Downloading {url} ...")
+-		snapshot_download(
+-		    repo_id=url,
+-		    local_dir=model_dir,
+-		    local_dir_use_symlinks=False
+-		)
++import torch
+ 
+-	
+-	def ini_model(self, models_dir="./models/", force_download=False):
+-		models_list = ["llama3-1B-chat", "llama3-3B-chat", "llama3-8B-chat", "gpt-oss-20B", "qwen3-next-80B", "gemma3-12B"]
+-		if self.model_id not in models_list:
+-			raise ValueError("Incorrect model id. It must be one of", models_list)
+-		
+-		model_dir = os.path.join(models_dir, self.model_id)
+-		if os.path.exists(model_dir)==False or force_download==True:
+-			if self.model_id in ["qwen3-next-80B", "gemma3-12B"]:
+-				self.hf_download(model_dir)
+-			else:
+-				self.download_and_unpack(models_dir)
+-		
+-		print("loading model from", model_dir)
+-		if self.model_id=="qwen3-next-80B":
+-			from . import qwen3_next
+-			qwen3_next.loader = MoEWeightsLoader2(model_dir)
+-			qwen3_next.stats = self.stats
+-			self.model = qwen3_next.MyQwen3NextForCausalLM.from_pretrained(model_dir, torch_dtype=torch.bfloat16, device_map="cpu", attn_implementation="flash_attention_2", low_cpu_mem_usage=True, ignore_mismatched_sizes=True)
+-		elif self.model_id=="gemma3-12B":
+-			from . import gemma3
+-			gemma3.loader = Gemma3Loader(model_dir)
+-			gemma3.stats = self.stats
+-			automodel = gemma3.MyGemma3ForConditionalGeneration if self.multimodality else gemma3.MyGemma3ForCausalLM
+-			self.model = automodel.from_pretrained(model_dir, torch_dtype=torch.bfloat16, device_map="cpu", attn_implementation="flash_attention_2", low_cpu_mem_usage=True, ignore_mismatched_sizes=True)
+-			self.processor = AutoProcessor.from_pretrained(model_dir)
+-		elif self.model_id=="gpt-oss-20B":
+-			from . import gpt_oss
+-			gpt_oss.loader = GDSWeights(os.path.join(model_dir, "gds_export"))
+-			gpt_oss.stats = self.stats
+-			self.model = gpt_oss.MyGptOssForCausalLM.from_pretrained(model_dir, torch_dtype=torch.bfloat16, device_map="cpu", low_cpu_mem_usage=True, ignore_mismatched_sizes=True)
+-		else:
+-			from . import llama
+-			llama.loader = GDSWeights(os.path.join(model_dir, "gds_export"))
+-			llama.stats = self.stats			
+-			self.model = llama.MyLlamaForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float16, device_map="cpu", attn_implementation="flash_attention_2", low_cpu_mem_usage=True, ignore_mismatched_sizes=True)
+-			self.model.clean_layers_weights()
++from .pipelines import registry
++from .pipelines import llm_adapter  # noqa: F401
++from .pipelines.diffusion import adapter as diffusion_adapter  # noqa: F401
++from .utils import Stats
+ 
+-		self.model.eval()
+-		self.model.to(self.device)
+-		self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+ 
+-	
+-	def offload_layers_to_cpu(self, **args):
+-		self.model.offload_layers_to_cpu(**args)
+-	
+-	def offload_layers_to_gpu_cpu(self, **args):
+-		self.model.offload_layers_to_gpu_cpu(**args)
+-	
+-	def DiskCache(self, cache_dir="./kvcache"):
+-		if self.model_id in ["gpt-oss-20B"]:
+-			print(f"{self.model_id} DiskCache is not supported at the moment. Using default DynamicCache instead")
+-			return None
+-		elif self.model_id=="qwen3-next-80B":
+-			from .qwen3_next import Qwen3NextDiskCache
+-			return Qwen3NextDiskCache(self.model.config, cache_dir=cache_dir, stats=self.stats)
+-		else:
+-			return KVCache(cache_dir=cache_dir, stats=self.stats) #config=?
++class Inference:
++    def __init__(self, model_id, device="cuda:0", logging=True, multimodality=False, **kwargs):
++        self.model_id = model_id
++        self.device = torch.device(device)
++        self.multimodality = multimodality
++        self.stats = Stats() if logging else None
++        factory = registry.get(model_id)
++        self.adapter = factory(
++            model_id=model_id,
++            device=self.device,
++            stats=self.stats,
++            multimodality=multimodality,
++            **kwargs,
++        )
++        self.model = None
++        self.tokenizer: Optional[object] = None
++        self.processor: Optional[object] = None
++
++    def ini_model(self, models_dir="./models/", force_download=False):
++        os.makedirs(models_dir, exist_ok=True)
++        model_dir = self.adapter.prepare(models_dir, force_download=force_download)
++        self.adapter.load(model_dir)
++        self.model = self.adapter.model
++        self.tokenizer = getattr(self.adapter, "tokenizer", None)
++        self.processor = getattr(self.adapter, "processor", None)
++        return self.model
++
++    def offload_layers_to_cpu(self, **args):
++        if hasattr(self.adapter, "offload_layers_to_cpu"):
++            return self.adapter.offload_layers_to_cpu(**args)
++        raise AttributeError("Adapter does not support CPU offload")
++
++    def offload_layers_to_gpu_cpu(self, **args):
++        if hasattr(self.adapter, "offload_layers_to_gpu_cpu"):
++            return self.adapter.offload_layers_to_gpu_cpu(**args)
++        raise AttributeError("Adapter does not support GPU/CPU offload")
++
++    def DiskCache(self, cache_dir="./kvcache"):
++        if hasattr(self.adapter, "disk_cache"):
++            return self.adapter.disk_cache(cache_dir=cache_dir)
++        raise AttributeError("Adapter does not implement disk caching")
++
++    def generate(self, *args, **kwargs):
++        return self.adapter.generate(*args, **kwargs)
+diff --git a/src/ollm/pipelines/__init__.py b/src/ollm/pipelines/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..5c34e914bb39b59e880a1111eff2ea8787a674f5
+--- /dev/null
++++ b/src/ollm/pipelines/__init__.py
+@@ -0,0 +1,6 @@
++"""Pipeline adapters for oLLM inference runtimes."""
++
++from .registry import Registry, registry, register_adapter
++from .base import PipelineAdapter
++
++__all__ = ["PipelineAdapter", "Registry", "registry", "register_adapter"]
+diff --git a/src/ollm/pipelines/base.py b/src/ollm/pipelines/base.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..11f482507bd5682804682112a1636dc44a06573c
+--- /dev/null
++++ b/src/ollm/pipelines/base.py
+@@ -0,0 +1,48 @@
++from __future__ import annotations
++
++from abc import ABC, abstractmethod
++from typing import Any, Dict, Optional
++
++
++class PipelineAdapter(ABC):
++    """Base class for all pipeline adapters used by :class:`~ollm.inference.Inference`.
++
++    Adapters encapsulate model-specific download, loading, and execution logic so
++    that the core runtime can support heterogeneous architectures (LLMs, diffusion
++    pipelines, etc.).
++    """
++
++    def __init__(self, model_id: str, device, stats=None, **kwargs):
++        self.model_id = model_id
++        self.device = device
++        self.stats = stats
++        self.kwargs = kwargs
++        self.model = None
++        self.tokenizer = None
++        self.processor = None
++
++    @abstractmethod
++    def prepare(self, models_dir: str, force_download: bool = False) -> str:
++        """Ensure the weights/artifacts for the model are available locally.
++
++        Returns the directory that contains the (possibly downloaded) weights.
++        """
++
++    @abstractmethod
++    def load(self, model_dir: str) -> None:
++        """Load the model artifacts into memory."""
++
++    def offload_layers_to_cpu(self, **args):  # pragma: no cover - optional override
++        raise NotImplementedError("CPU offload is not implemented for this adapter")
++
++    def offload_layers_to_gpu_cpu(self, **args):  # pragma: no cover - optional override
++        raise NotImplementedError("GPU/CPU tiered offload is not implemented for this adapter")
++
++    def disk_cache(self, **args):  # pragma: no cover - optional override
++        raise NotImplementedError("Disk cache is not implemented for this adapter")
++
++    def generate(self, *args, **kwargs):  # pragma: no cover - optional override
++        raise NotImplementedError("Generation is not implemented for this adapter")
++
++    def metadata(self) -> Optional[Dict[str, Any]]:  # pragma: no cover - optional override
++        return None
+diff --git a/src/ollm/pipelines/diffusion/__init__.py b/src/ollm/pipelines/diffusion/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..06c12b27d9ef9e56b1c07ded67c9bde3cf5c3c65
+--- /dev/null
++++ b/src/ollm/pipelines/diffusion/__init__.py
+@@ -0,0 +1,6 @@
++"""Diffusion pipeline support for oLLM."""
++
++from .adapter import DiffusionPipelineAdapter
++from .runner import DiffusionRunner, DiffusionRunConfig
++
++__all__ = ["DiffusionPipelineAdapter", "DiffusionRunner", "DiffusionRunConfig"]
+diff --git a/src/ollm/pipelines/diffusion/adapter.py b/src/ollm/pipelines/diffusion/adapter.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..116011dd6a5f2cdfbc4f1f6c591f1aacb8b93fb6
+--- /dev/null
++++ b/src/ollm/pipelines/diffusion/adapter.py
+@@ -0,0 +1,194 @@
++from __future__ import annotations
++
++import os
++import zipfile
++from dataclasses import dataclass, replace
++from typing import Dict, Optional, TYPE_CHECKING
++
++import torch
++
++from ..base import PipelineAdapter
++from ..registry import register_adapter
++from .runner import DiffusionRunner
++
++if TYPE_CHECKING:  # pragma: no cover - only for type checkers
++    from diffusers import DiffusionPipeline
++
++
++@dataclass
++class DiffusionModelConfig:
++    model_ids: tuple
++    repo_id: Optional[str] = None
++    download_url: Optional[str] = None
++    revision: Optional[str] = None
++    variant: Optional[str] = None
++    torch_dtype: torch.dtype = torch.float16
++    enable_cpu_offload: bool = True
++    enable_sequential_offload: bool = True
++    enable_vae_tiling: bool = True
++    enable_attention_slicing: bool = True
++    scheduler_override: Optional[str] = None
++
++
++_DIFFUSION_MODELS: Dict[str, DiffusionModelConfig] = {
++    "sdxl-base-1.0": DiffusionModelConfig(
++        model_ids=("sdxl-base-1.0",),
++        repo_id="stabilityai/stable-diffusion-xl-base-1.0",
++        variant="fp16",
++    ),
++    "qwen-image-edit": DiffusionModelConfig(
++        model_ids=("qwen-image-edit", "Qwen/Qwen-Image-Edit-2509"),
++        repo_id="Qwen/Qwen-Image-Edit-2509",
++        torch_dtype=torch.float16,
++    ),
++}
++
++
++def _maybe_download_zip(url: str, destination_dir: str) -> None:
++    if not url:
++        raise ValueError(
++            "No download URL configured. Set OLLMDIFF_QWEN_IMAGE_EDIT_URL to a direct download for the diffusers weights."
++        )
++    os.makedirs(destination_dir, exist_ok=True)
++    filename = url.split("/")[-1] or "weights.zip"
++    zip_path = os.path.join(destination_dir, filename)
++    print(f"Downloading diffusion weights from {url} ...")
++
++    import requests
++
++    with requests.get(url, stream=True) as response:
++        response.raise_for_status()
++        with open(zip_path, "wb") as f:
++            for chunk in response.iter_content(chunk_size=8192):
++                f.write(chunk)
++    print(f"Downloaded to {zip_path}")
++    print("Unpacking archive ...")
++    with zipfile.ZipFile(zip_path, "r") as zip_ref:
++        zip_ref.extractall(destination_dir)
++    os.remove(zip_path)
++
++
++@register_adapter([model_id for config in _DIFFUSION_MODELS.values() for model_id in config.model_ids])
++class DiffusionPipelineAdapter(PipelineAdapter):
++    """Adapter that loads diffusion pipelines with aggressive offloading."""
++
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.requested_model_id = self.model_id
++        self.config = self._resolve_config()
++        if self.requested_model_id != self.cache_id:
++            print(
++                f"Redirecting requested diffusion id '{self.requested_model_id}' to registered '{self.cache_id}'"
++            )
++        overrides = {}
++        for field in (
++            "download_url",
++            "repo_id",
++            "revision",
++            "variant",
++            "torch_dtype",
++            "enable_cpu_offload",
++            "enable_sequential_offload",
++            "enable_vae_tiling",
++            "enable_attention_slicing",
++            "scheduler_override",
++        ):
++            if field in self.kwargs and self.kwargs[field] is not None:
++                overrides[field] = self.kwargs[field]
++        if overrides:
++            self.config = replace(self.config, **overrides)
++        self.runner: Optional[DiffusionRunner] = None
++
++    def _resolve_config(self) -> DiffusionModelConfig:
++        if self.model_id in _DIFFUSION_MODELS:
++            self.cache_id = self.model_id
++            return _DIFFUSION_MODELS[self.model_id]
++
++        for cache_id, config in _DIFFUSION_MODELS.items():
++            if self.model_id in config.model_ids:
++                self.cache_id = cache_id
++                return config
++
++        raise KeyError(f"Unknown diffusion model '{self.model_id}'")
++
++    def prepare(self, models_dir: str, force_download: bool = False) -> str:
++        os.makedirs(models_dir, exist_ok=True)
++        model_dir = os.path.join(models_dir, self.cache_id)
++        if os.path.exists(model_dir) and not force_download:
++            return model_dir
++
++        if os.path.exists(model_dir) and force_download:
++            print(f"Removing existing model directory {model_dir} for fresh download")
++            import shutil
++
++            shutil.rmtree(model_dir)
++
++        sanitized = self.cache_id.upper().replace("-", "_").replace("/", "_")
++
++        if self.config.repo_id:
++            from huggingface_hub import snapshot_download
++
++            print(f"Downloading {self.config.repo_id} ...")
++            snapshot_download(
++                repo_id=self.config.repo_id,
++                local_dir=model_dir,
++                local_dir_use_symlinks=False,
++                revision=self.config.revision,
++            )
++        else:
++            download_url = self.config.download_url
++            if download_url is None:
++                env_key = f"OLLMDIFF_{sanitized}_URL"
++                download_url = os.environ.get(env_key)
++            if download_url:
++                _maybe_download_zip(download_url, model_dir)
++            else:
++                raise ValueError(
++                    f"Model '{self.requested_model_id}' has no repository or download URL configured. "
++                    "Provide download_url=... or set the environment variable "
++                    f"OLLMDIFF_{sanitized}_URL"
++                )
++
++        return model_dir
++
++    def load(self, model_dir: str) -> None:
++        from diffusers import DiffusionPipeline
++
++        print(f"Loading diffusion pipeline from {model_dir}")
++        pipeline = DiffusionPipeline.from_pretrained(
++            model_dir,
++            torch_dtype=self.config.torch_dtype,
++            use_safetensors=True,
++            variant=self.config.variant,
++        )
++
++        if self.config.enable_attention_slicing:
++            pipeline.enable_attention_slicing()
++        if self.config.enable_vae_tiling and hasattr(pipeline, "vae"):
++            pipeline.enable_vae_tiling()
++
++        if self.config.enable_sequential_offload:
++            pipeline.enable_sequential_cpu_offload(self.device)
++        elif self.config.enable_cpu_offload:
++            pipeline.enable_model_cpu_offload(self.device)
++
++        try:
++            pipeline.unet.to(memory_format=torch.channels_last)
++        except Exception:
++            pass
++
++        self.model = pipeline
++        self.runner = DiffusionRunner(
++            pipeline=pipeline,
++            device=self.device,
++            torch_dtype=self.config.torch_dtype,
++            scheduler_override=self.config.scheduler_override,
++        )
++
++    def generate(self, *args, **kwargs):
++        if self.runner is None:
++            raise RuntimeError("Pipeline is not loaded")
++        return self.runner.generate(*args, **kwargs)
++
++    def metadata(self) -> Dict[str, str]:
++        return {"type": "diffusion"}
+diff --git a/src/ollm/pipelines/diffusion/runner.py b/src/ollm/pipelines/diffusion/runner.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd41437d56c575b394121c5326d5ecefb3cc803f
+--- /dev/null
++++ b/src/ollm/pipelines/diffusion/runner.py
+@@ -0,0 +1,125 @@
++from __future__ import annotations
++
++from dataclasses import dataclass, field, fields
++from typing import Any, Dict, Optional, Sequence, Union
++
++import torch
++
++
++@dataclass
++class DiffusionRunConfig:
++    prompt: Optional[Union[str, Sequence[str]]] = None
++    negative_prompt: Optional[Union[str, Sequence[str]]] = None
++    num_inference_steps: int = 30
++    guidance_scale: float = 5.0
++    height: Optional[int] = None
++    width: Optional[int] = None
++    generator: Optional[Union[int, torch.Generator]] = None
++    output_type: str = "pil"
++    eta: Optional[float] = None
++    denoising_start: Optional[float] = None
++    denoising_end: Optional[float] = None
++    strength: Optional[float] = None
++    image: Optional[Any] = None
++    mask_image: Optional[Any] = None
++    control_image: Optional[Any] = None
++    controlnet_conditioning_image: Optional[Any] = None
++    guidance_rescale: Optional[float] = None
++    prompt_embeds: Optional[Any] = None
++    negative_prompt_embeds: Optional[Any] = None
++    extra_options: Dict[str, Any] = field(default_factory=dict)
++
++
++class DiffusionRunner:
++    """Executes diffusion denoising loops with resource-aware defaults."""
++
++    def __init__(
++        self,
++        pipeline,
++        device: torch.device,
++        torch_dtype: torch.dtype = torch.float16,
++        scheduler_override: Optional[str] = None,
++    ) -> None:
++        self.pipeline = pipeline
++        self.device = device
++        self.torch_dtype = torch_dtype
++        self._apply_scheduler_override(scheduler_override)
++        self.pipeline.set_progress_bar_config(leave=False)
++
++    def _apply_scheduler_override(self, scheduler_name: Optional[str]) -> None:
++        if not scheduler_name:
++            return
++        from importlib import import_module
++
++        module = import_module("diffusers.schedulers")
++        scheduler_cls = getattr(module, scheduler_name, None)
++        if scheduler_cls is None:
++            raise ValueError(f"Unknown scheduler '{scheduler_name}'")
++        self.pipeline.scheduler = scheduler_cls.from_config(self.pipeline.scheduler.config)
++
++    def _prepare_generator(self, generator) -> Optional[torch.Generator]:
++        if generator is None:
++            return None
++        if isinstance(generator, torch.Generator):
++            return generator
++        if isinstance(generator, int):
++            gen = torch.Generator(device=self.device)
++            gen.manual_seed(generator)
++            return gen
++        raise TypeError("generator must be None, an int seed, or a torch.Generator instance")
++
++    def generate(self, config: Optional[DiffusionRunConfig] = None, **kwargs):
++        if config is None:
++            known_fields = {f.name for f in fields(DiffusionRunConfig)}
++            cfg_kwargs = {k: v for k, v in kwargs.items() if k in known_fields}
++            extra_options = {k: v for k, v in kwargs.items() if k not in known_fields}
++            config = DiffusionRunConfig(**cfg_kwargs)
++            if extra_options:
++                config.extra_options.update(extra_options)
++        elif kwargs:
++            config.extra_options.update(kwargs)
++
++        generator = self._prepare_generator(config.generator)
++        call_kwargs: Dict[str, Any] = {
++            "num_inference_steps": config.num_inference_steps,
++            "guidance_scale": config.guidance_scale,
++            "output_type": config.output_type,
++        }
++
++        if config.prompt is not None:
++            call_kwargs["prompt"] = config.prompt
++        if config.negative_prompt is not None:
++            call_kwargs["negative_prompt"] = config.negative_prompt
++        if config.height is not None:
++            call_kwargs["height"] = config.height
++        if config.width is not None:
++            call_kwargs["width"] = config.width
++        if generator is not None:
++            call_kwargs["generator"] = generator
++        if config.eta is not None:
++            call_kwargs["eta"] = config.eta
++        if config.denoising_start is not None:
++            call_kwargs["denoising_start"] = config.denoising_start
++        if config.denoising_end is not None:
++            call_kwargs["denoising_end"] = config.denoising_end
++        if config.strength is not None:
++            call_kwargs["strength"] = config.strength
++        if config.image is not None:
++            call_kwargs["image"] = config.image
++        if config.mask_image is not None:
++            call_kwargs["mask_image"] = config.mask_image
++        if config.control_image is not None:
++            call_kwargs["control_image"] = config.control_image
++        if config.controlnet_conditioning_image is not None:
++            call_kwargs["controlnet_conditioning_image"] = config.controlnet_conditioning_image
++        if config.guidance_rescale is not None:
++            call_kwargs["guidance_rescale"] = config.guidance_rescale
++        if config.prompt_embeds is not None:
++            call_kwargs["prompt_embeds"] = config.prompt_embeds
++        if config.negative_prompt_embeds is not None:
++            call_kwargs["negative_prompt_embeds"] = config.negative_prompt_embeds
++
++        if config.extra_options:
++            call_kwargs.update(config.extra_options)
++
++        return self.pipeline(**call_kwargs)
+diff --git a/src/ollm/pipelines/llm_adapter.py b/src/ollm/pipelines/llm_adapter.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..b03ec4cd57bab379ba825a60fe0cfb3d3c956695
+--- /dev/null
++++ b/src/ollm/pipelines/llm_adapter.py
+@@ -0,0 +1,173 @@
++from __future__ import annotations
++
++import os
++import zipfile
++from typing import Dict, Optional
++
++import requests
++import torch
++from transformers import AutoProcessor, AutoTokenizer
++
++from ..kvcache import KVCache
++from .base import PipelineAdapter
++from .registry import register_adapter
++
++
++_LLAMA_URLS: Dict[str, str] = {
++    "llama3-1B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-1B-chat.zip",
++    "llama3-3B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-3B-chat.zip",
++    "llama3-8B-chat": "https://ollm.s3.us-east-1.amazonaws.com/models/llama3-8B-chat.zip",
++    "gpt-oss-20B": "https://ollm.s3.us-east-1.amazonaws.com/models/gpt-oss-20B.zip",
++}
++
++_HF_MODELS: Dict[str, str] = {
++    "qwen3-next-80B": "Qwen/Qwen3-Next-80B-A3B-Instruct",
++    "gemma3-12B": "google/gemma-3-12b-it",
++}
++
++
++@register_adapter(
++    [
++        "llama3-1B-chat",
++        "llama3-3B-chat",
++        "llama3-8B-chat",
++        "gpt-oss-20B",
++        "qwen3-next-80B",
++        "gemma3-12B",
++    ]
++)
++class LLMPipelineAdapter(PipelineAdapter):
++    """Adapter that encapsulates the original oLLM LLM loading behaviour."""
++
++    def prepare(self, models_dir: str, force_download: bool = False) -> str:
++        os.makedirs(models_dir, exist_ok=True)
++        model_dir = os.path.join(models_dir, self.model_id)
++        if not os.path.exists(model_dir) or force_download:
++            if self.model_id in _HF_MODELS:
++                self._hf_download(model_dir)
++            else:
++                self._download_and_unpack(models_dir)
++        return model_dir
++
++    def _download_and_unpack(self, models_dir: str) -> None:
++        url = _LLAMA_URLS[self.model_id]
++        filename = url.split("/")[-1]
++        zip_path = os.path.join(models_dir, filename)
++        print(f"Downloading {url} ...")
++        response = requests.get(url, stream=True)
++        response.raise_for_status()
++        with open(zip_path, "wb") as f:
++            for chunk in response.iter_content(chunk_size=8192):
++                f.write(chunk)
++        print(f"Downloaded to {zip_path}")
++
++        print(f"Unpacking {zip_path} ...")
++        with zipfile.ZipFile(zip_path, "r") as zip_ref:
++            zip_ref.extractall(models_dir)
++        print(f"Unpacked to {models_dir}")
++        os.remove(zip_path)
++
++    def _hf_download(self, model_dir: str) -> None:
++        from huggingface_hub import snapshot_download
++
++        repo = _HF_MODELS[self.model_id]
++        print(f"Downloading {repo} ...")
++        snapshot_download(repo_id=repo, local_dir=model_dir, local_dir_use_symlinks=False)
++
++    def load(self, model_dir: str) -> None:
++        print("loading model from", model_dir)
++        if self.model_id == "qwen3-next-80B":
++            from .. import qwen3_next
++            from ..gds_loader import MoEWeightsLoader2
++
++            qwen3_next.loader = MoEWeightsLoader2(model_dir)
++            qwen3_next.stats = self.stats
++            self.model = qwen3_next.MyQwen3NextForCausalLM.from_pretrained(
++                model_dir,
++                torch_dtype=torch.bfloat16,
++                device_map="cpu",
++                attn_implementation="flash_attention_2",
++                low_cpu_mem_usage=True,
++                ignore_mismatched_sizes=True,
++            )
++        elif self.model_id == "gemma3-12B":
++            from .. import gemma3
++            from ..gds_loader import Gemma3Loader
++
++            gemma3.loader = Gemma3Loader(model_dir)
++            gemma3.stats = self.stats
++            automodel = (
++                gemma3.MyGemma3ForConditionalGeneration
++                if self.kwargs.get("multimodality")
++                else gemma3.MyGemma3ForCausalLM
++            )
++            self.model = automodel.from_pretrained(
++                model_dir,
++                torch_dtype=torch.bfloat16,
++                device_map="cpu",
++                attn_implementation="flash_attention_2",
++                low_cpu_mem_usage=True,
++                ignore_mismatched_sizes=True,
++            )
++            self.processor = AutoProcessor.from_pretrained(model_dir)
++        elif self.model_id == "gpt-oss-20B":
++            from .. import gpt_oss
++            from ..gds_loader import GDSWeights
++
++            gpt_oss.loader = GDSWeights(os.path.join(model_dir, "gds_export"))
++            gpt_oss.stats = self.stats
++            self.model = gpt_oss.MyGptOssForCausalLM.from_pretrained(
++                model_dir,
++                torch_dtype=torch.bfloat16,
++                device_map="cpu",
++                low_cpu_mem_usage=True,
++                ignore_mismatched_sizes=True,
++            )
++        else:
++            from .. import llama
++            from ..gds_loader import GDSWeights
++
++            llama.loader = GDSWeights(os.path.join(model_dir, "gds_export"))
++            llama.stats = self.stats
++            self.model = llama.MyLlamaForCausalLM.from_pretrained(
++                model_dir,
++                torch_dtype=torch.float16,
++                device_map="cpu",
++                attn_implementation="flash_attention_2",
++                low_cpu_mem_usage=True,
++                ignore_mismatched_sizes=True,
++            )
++            self.model.clean_layers_weights()
++
++        self.model.eval()
++        self.model.to(self.device)
++        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
++
++    def offload_layers_to_cpu(self, **args):
++        if hasattr(self.model, "offload_layers_to_cpu"):
++            return self.model.offload_layers_to_cpu(**args)
++        raise AttributeError("Model does not support CPU offload")
++
++    def offload_layers_to_gpu_cpu(self, **args):
++        if hasattr(self.model, "offload_layers_to_gpu_cpu"):
++            return self.model.offload_layers_to_gpu_cpu(**args)
++        raise AttributeError("Model does not support GPU/CPU offload")
++
++    def disk_cache(self, **args):
++        if self.model_id in {"gpt-oss-20B"}:
++            print(f"{self.model_id} DiskCache is not supported at the moment. Using default DynamicCache instead")
++            return None
++        elif self.model_id == "qwen3-next-80B":
++            from ..qwen3_next import Qwen3NextDiskCache
++
++            return Qwen3NextDiskCache(self.model.config, stats=self.stats, **args)
++        else:
++            return KVCache(stats=self.stats, **args)
++
++    def generate(self, *args, **kwargs):
++        if not hasattr(self.model, "generate"):
++            raise AttributeError("Model does not expose a generate method")
++        return self.model.generate(*args, **kwargs)
++
++    def metadata(self) -> Optional[Dict[str, str]]:
++        return {"type": "llm"}
+diff --git a/src/ollm/pipelines/registry.py b/src/ollm/pipelines/registry.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..ea87eb101879c8d453f54440ef6ff725aaf1e3ea
+--- /dev/null
++++ b/src/ollm/pipelines/registry.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import Callable, Dict, Iterable, Optional, Type
++
++from .base import PipelineAdapter
++
++
++@dataclass
++class Registry:
++    """Simple registry that maps model identifiers to adapter factories."""
++
++    _factories: Dict[str, Callable[..., PipelineAdapter]] = field(default_factory=dict)
++
++    def register(self, model_ids: Iterable[str], factory: Callable[..., PipelineAdapter]) -> None:
++        for model_id in model_ids:
++            if model_id in self._factories:
++                raise ValueError(f"Model id '{model_id}' is already registered")
++            self._factories[model_id] = factory
++
++    def get(self, model_id: str) -> Callable[..., PipelineAdapter]:
++        try:
++            return self._factories[model_id]
++        except KeyError as exc:
++            raise ValueError(
++                f"Unknown model id '{model_id}'. Available models: {sorted(self._factories.keys())}"
++            ) from exc
++
++    def list(self) -> Iterable[str]:
++        return self._factories.keys()
++
++
++registry = Registry()
++
++
++def register_adapter(model_ids: Iterable[str]):
++    """Decorator that registers the decorated adapter class for the given ids."""
++
++    def decorator(cls: Type[PipelineAdapter]):
++        registry.register(model_ids, lambda *args, **kwargs: cls(*args, **kwargs))
++        return cls
++
++    return decorator
+ 
+EOF
+)
