@@ -10,9 +10,11 @@
 LLM Inference for Large-Context Offline Workloads
 </h3>
 
-oLLM is a lightweight Python library for large-context LLM inference, built on top of Huggingface Transformers and PyTorch. It enables running models like [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b), [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) or [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) on 100k context using ~$200 consumer GPU with 8GB VRAM.  No quantization is used—only fp16/bf16 precision. 
-<p dir="auto"><em>Latest updates (0.5.0)</em> 🔥</p>
+oLLM is a lightweight Python library for large-context LLM inference, built on top of Huggingface Transformers and PyTorch. It enables running models like [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b), [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) or [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) on 100k context using ~$200 consumer GPU with 8GB VRAM.  No quantization is used—only fp16/bf16 precision.
+With 0.6.0, the same streaming/offload machinery now works for diffusion pipelines: large image or video checkpoints can be executed on 8–12 GB cards via CPU and disk orchestration.
+<p dir="auto"><em>Latest updates (0.6.0)</em> 🔥</p>
 <ul dir="auto">
+<li>Pluggable pipeline runtime with first-class <b>diffusion</b> support (run Stable Diffusion XL or Qwen Image Edit with CPU/disk offload)</li>
 <li>Multimodal <b>gemma3-12B</b> (image+text) added. <a href="https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py">[sample with image]</a> </li>
 <li>.safetensor files are now read without `mmap` so they no longer consume RAM through page cache</li>
 <li>qwen3-next-80B DiskCache support added</li>
@@ -93,6 +95,58 @@ or run sample python script as `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 **More samples**
 - [gemma3-12B image+text ](https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py)
+- [Stable Diffusion XL / Qwen Image Edit on 8 GB GPUs](samples/run_diffusion.py)
+
+## Diffusion pipelines on small GPUs
+
+The new adapter registry lets you instantiate diffusion pipelines alongside LLMs. To run a public Stable Diffusion XL checkpoint:
+
+```python
+from ollm import Inference
+
+pipe = Inference("sdxl-base-1.0", device="cuda:0")
+pipe.ini_model(models_dir="./models")
+result = pipe.generate(
+    prompt="A cinematic photo of a koala astronaut exploring a neon jungle",
+    num_inference_steps=35,
+    guidance_scale=7.0,
+    output_type="pil",
+)
+result.images[0].save("koala.png")
+```
+
+For community checkpoints hosted on CivitAI (e.g., [Qwen Image Edit](https://civitai.com/models/1884704/qwen-image-edit)) provide a direct ZIP link (requires a free account) via keyword argument or environment variable:
+
+```bash
+export OLLMDIFF_QWEN_IMAGE_EDIT_URL="https://civitai.com/api/download/models/1884704?type=Model&format=Diffusers"  # example
+```
+
+```python
+import os
+
+from ollm import Inference
+
+pipe = Inference(
+    "qwen-image-edit",
+    device="cuda:0",
+    download_url=os.environ.get("OLLMDIFF_QWEN_IMAGE_EDIT_URL"),
+)
+pipe.ini_model(models_dir="./models")
+edited = pipe.generate(
+    prompt="A watercolor skyline at dusk",
+    strength=0.55,
+    num_inference_steps=25,
+)
+edited.images[0].save("edited.png")
+```
+
+Key memory-saving features that activate automatically:
+
+- `enable_sequential_cpu_offload` streams UNet/vae blocks between CPU and GPU, keeping VRAM usage close to 6–8 GB.
+- VAE tiling + attention slicing reduce activation peaks on large (1024x1024) renders.
+- Scheduler overrides and deterministic seeds are exposed through `DiffusionRunner` for reproducibility.
+
+⚠️ CivitAI often distributes diffusers weights as ZIP archives. Ensure the archive contains the diffusers directory structure (`model_index.json`, `unet`, `vae`, etc.). The adapter extracts archives automatically into `./models/<model_id>`.
 
 ## Roadmap
 *For visibility of what's coming next (subject to change)*
