@@ -32,6 +32,10 @@ class DiffusionModelConfig:
     enable_sequential_offload: bool = True
     enable_vae_tiling: bool = True
     enable_attention_slicing: bool = True
+    attention_slicing: Optional[object] = "auto"
+    forward_chunk_size: Optional[int] = 2
+    enable_xformers: bool = False
+    text_encoder_offload: str = "cpu"
     scheduler_override: Optional[str] = None
 
 
@@ -45,6 +49,13 @@ _DIFFUSION_MODELS: Dict[str, DiffusionModelConfig] = {
         model_ids=("qwen-image-edit", "Qwen/Qwen-Image-Edit-2509"),
         repo_id="Qwen/Qwen-Image-Edit-2509",
         torch_dtype=torch.float16,
+    ),
+    "flux-1-dev": DiffusionModelConfig(
+        model_ids=("flux-1-dev", "FLUX.1-dev", "black-forest-labs/FLUX.1-dev"),
+        repo_id="black-forest-labs/FLUX.1-dev",
+        torch_dtype=torch.float16,
+        attention_slicing="max",
+        forward_chunk_size=2,
     ),
 }
 
@@ -96,6 +107,10 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             "enable_sequential_offload",
             "enable_vae_tiling",
             "enable_attention_slicing",
+            "attention_slicing",
+            "forward_chunk_size",
+            "enable_xformers",
+            "text_encoder_offload",
             "scheduler_override",
         ):
             if field in self.kwargs and self.kwargs[field] is not None:
@@ -106,7 +121,11 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             "sequential_cpu_offload": self.config.enable_sequential_offload,
             "model_cpu_offload": self.config.enable_cpu_offload,
             "enable_vae_tiling": self.config.enable_vae_tiling,
-            "attention_slicing": self.config.enable_attention_slicing,
+            "enable_attention_slicing": self.config.enable_attention_slicing,
+            "attention_slicing": self.config.attention_slicing,
+            "forward_chunk_size": self.config.forward_chunk_size,
+            "enable_xformers": self.config.enable_xformers,
+            "text_encoder_offload": self.config.text_encoder_offload,
         }
         opt_overrides = {
             key: self.kwargs[key]
@@ -201,5 +220,7 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             "sequential_cpu_offload": str(self.optimizations.sequential_cpu_offload),
             "attention_slicing": str(self.optimizations.attention_slicing),
             "vae_tiling": str(self.optimizations.enable_vae_tiling),
+            "forward_chunk_size": str(self.optimizations.forward_chunk_size),
+            "text_encoder_offload": str(self.optimizations.text_encoder_offload),
         })
         return meta

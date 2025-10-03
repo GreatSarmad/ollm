@@ -3,6 +3,11 @@
 import argparse
 from pathlib import Path
 
+try:
+    import torch
+except ImportError:  # pragma: no cover - torch is optional on CPU-only setups
+    torch = None
+
 from PIL import Image
 
 from ollm import Inference
@@ -49,6 +54,11 @@ def parse_args() -> argparse.Namespace:
         help="Attention slicing strategy: auto, max, or explicit integer",
     )
     parser.add_argument(
+        "--no-attention-slicing",
+        action="store_true",
+        help="Disable attention slicing entirely",
+    )
+    parser.add_argument(
         "--forward-chunk",
         type=int,
         default=None,
@@ -64,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Keep the text encoder on GPU instead of offloading to CPU",
     )
+    parser.add_argument(
+        "--log-metrics",
+        action="store_true",
+        help="Print adapter metadata and peak GPU memory statistics after generation",
+    )
     return parser.parse_args()
 
 
@@ -77,7 +92,9 @@ def main() -> None:
         overrides["sequential_cpu_offload"] = False
     if args.no_vae_tiling:
         overrides["enable_vae_tiling"] = False
-    if args.attention_slicing:
+    if args.no_attention_slicing:
+        overrides["enable_attention_slicing"] = False
+    elif args.attention_slicing:
         try:
             overrides["attention_slicing"] = int(args.attention_slicing)
         except ValueError:
@@ -88,6 +105,9 @@ def main() -> None:
         overrides["enable_xformers"] = True
     if args.text_encoder_on_gpu:
         overrides["text_encoder_offload"] = "gpu"
+
+    if args.log_metrics and torch is not None and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
     inference = Inference(
         args.model_id,
@@ -137,6 +157,12 @@ def main() -> None:
             target = target.with_stem(stem)
         output_image.save(target)
         print(f"Saved image to {target}")
+
+    if args.log_metrics:
+        print("Adapter metadata:", inference.adapter.metadata())
+        if torch is not None and torch.cuda.is_available():
+            peak_gb = torch.cuda.max_memory_allocated() / 1024**3
+            print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
 
 
 if __name__ == "__main__":
