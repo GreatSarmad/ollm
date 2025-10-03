@@ -24,6 +24,7 @@ class DiffusionOptimizationConfig:
 
     sequential_cpu_offload: bool = True
     model_cpu_offload: bool = False
+    enable_attention_slicing: bool = True
     attention_slicing: Optional[Any] = "auto"
     enable_vae_tiling: bool = True
     enable_vae_slicing: bool = False
@@ -63,7 +64,12 @@ def apply_diffusion_optimizations(pipeline, config: DiffusionOptimizationConfig,
         except Exception:
             pass
 
-    if config.attention_slicing is not False and hasattr(pipeline, "enable_attention_slicing"):
+    if hasattr(pipeline, "disable_attention_slicing") and not config.enable_attention_slicing:
+        try:
+            pipeline.disable_attention_slicing()
+        except Exception:
+            pass
+    elif config.attention_slicing is not False and hasattr(pipeline, "enable_attention_slicing"):
         try:
             if config.attention_slicing in (True, "auto"):
                 pipeline.enable_attention_slicing()

@@ -164,9 +164,9 @@ python samples/run_diffusion.py qwen-image-edit "Refine the sky with a golden su
     --forward-chunk 2 --attention-slicing auto --log-metrics
 ```
 
-Flags such as `--no-sequential-offload`, `--xformers`, `--no-vae-tiling`, and `--text-encoder-on-gpu` map directly to the
+Flags such as `--no-sequential-offload`, `--xformers`, `--no-vae-tiling`, `--no-attention-slicing`, and `--text-encoder-on-gpu` map directly to the
 `DiffusionOptimizationConfig` dataclass.  Pass `--log-metrics` to print the adapter metadata and peak CUDA allocation once the
-render finishes—handy when validating Colab runs.
+render finishes—handy when validating Colab runs—or call `Inference(...).adapter.metadata()` directly in your own scripts.
 
 ### Expected VRAM with defaults (RTX 3060 Ti, 8 GB)
 

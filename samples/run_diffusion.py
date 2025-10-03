@@ -3,7 +3,11 @@
 import argparse
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:  # pragma: no cover - torch is optional on CPU-only setups
+    torch = None
+
 from PIL import Image
 
 from ollm import Inference
@@ -50,6 +54,11 @@ def parse_args() -> argparse.Namespace:
         help="Attention slicing strategy: auto, max, or explicit integer",
     )
     parser.add_argument(
+        "--no-attention-slicing",
+        action="store_true",
+        help="Disable attention slicing entirely",
+    )
+    parser.add_argument(
         "--forward-chunk",
         type=int,
         default=None,
@@ -83,7 +92,9 @@ def main() -> None:
         overrides["sequential_cpu_offload"] = False
     if args.no_vae_tiling:
         overrides["enable_vae_tiling"] = False
-    if args.attention_slicing:
+    if args.no_attention_slicing:
+        overrides["enable_attention_slicing"] = False
+    elif args.attention_slicing:
         try:
             overrides["attention_slicing"] = int(args.attention_slicing)
         except ValueError:
@@ -95,7 +106,7 @@ def main() -> None:
     if args.text_encoder_on_gpu:
         overrides["text_encoder_offload"] = "gpu"
 
-    if args.log_metrics and torch.cuda.is_available():
+    if args.log_metrics and torch is not None and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
     inference = Inference(
@@ -149,7 +160,7 @@ def main() -> None:
 
     if args.log_metrics:
         print("Adapter metadata:", inference.adapter.metadata())
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             peak_gb = torch.cuda.max_memory_allocated() / 1024**3
             print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
 

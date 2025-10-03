@@ -31,6 +31,7 @@ class DiffusionModelConfig:
     enable_cpu_offload: bool = True
     enable_sequential_offload: bool = True
     enable_vae_tiling: bool = True
+    enable_attention_slicing: bool = True
     attention_slicing: Optional[object] = "auto"
     forward_chunk_size: Optional[int] = 2
     enable_xformers: bool = False
@@ -105,6 +106,7 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             "enable_cpu_offload",
             "enable_sequential_offload",
             "enable_vae_tiling",
+            "enable_attention_slicing",
             "attention_slicing",
             "forward_chunk_size",
             "enable_xformers",
@@ -119,6 +121,7 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             "sequential_cpu_offload": self.config.enable_sequential_offload,
             "model_cpu_offload": self.config.enable_cpu_offload,
             "enable_vae_tiling": self.config.enable_vae_tiling,
+            "enable_attention_slicing": self.config.enable_attention_slicing,
             "attention_slicing": self.config.attention_slicing,
             "forward_chunk_size": self.config.forward_chunk_size,
             "enable_xformers": self.config.enable_xformers,
