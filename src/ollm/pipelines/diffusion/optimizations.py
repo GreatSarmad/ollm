@@ -2,9 +2,9 @@
 
 The helpers in this module wrap common low-VRAM strategies so that callers do not
 need to remember the exact sequence of method calls supported by each
-``diffusers`` release.  They intentionally mirror the philosophy used for large
+``diffusers`` release. They intentionally mirror the philosophy used for large
 language models inside oLLM: aggressively stream weights from disk/CPU and keep
-activations small via tiling/chunking.  While full NVMe streaming for UNet
+activations small via tiling/chunking. While full NVMe streaming for UNet
 layers is work in progress, these knobs unlock the built-in optimisations that
 ``diffusers`` exposes today (sequential offload, attention slicing, VAE tiling,
 etc.) and provide a single place to evolve the feature set.
@@ -102,7 +102,7 @@ def apply_diffusion_optimizations(pipeline, config: DiffusionOptimizationConfig,
         except Exception:
             pass
 
-    # CPU/GPU offload hierarchy mirrors diffusers utilities.  Sequential CPU
+    # CPU/GPU offload hierarchy mirrors diffusers utilities. Sequential CPU
     # offload keeps only the working module on GPU, which mirrors the oLLM
     # philosophy most closely.
     if config.sequential_cpu_offload and hasattr(pipeline, "enable_sequential_cpu_offload"):
@@ -121,7 +121,7 @@ def apply_diffusion_optimizations(pipeline, config: DiffusionOptimizationConfig,
         except Exception:
             offloaded = False
 
-    # Text encoders are large and only needed during prompt encoding.  To avoid
+    # Text encoders are large and only needed during prompt encoding. To avoid
     # them occupying scarce VRAM, move them to CPU unless explicitly requested
     # otherwise.
     if config.text_encoder_offload != "gpu" and hasattr(pipeline, "text_encoder"):

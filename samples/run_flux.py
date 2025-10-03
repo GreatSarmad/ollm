@@ -1,4 +1,11 @@
-"""Run FLUX.1-dev with the oLLM diffusion adapter on a small GPU."""
+"""Run FLUX.1-dev with the oLLM diffusion adapter on a small GPU.
+
+This sample mirrors the diagnostic workflow requested in Colab notebooks: it
+loads the official ``black-forest-labs/FLUX.1-dev`` checkpoint through the
+``Inference`` API, applies the sequential offload/tiling defaults, and prints
+peak VRAM usage plus adapter metadata so it is easy to verify that the
+oLLM-specific optimisations were active.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     inference = Inference(
         "flux-1-dev",
@@ -35,7 +43,7 @@ def main() -> None:
     if args.log_metrics and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
-    inference.ini_model(models_dir=args.models_dir)
+    inference.ini_model(models_dir=args.models-dir)
 
     result = inference.generate(
         prompt=args.prompt,
@@ -51,11 +59,11 @@ def main() -> None:
     result.images[0].save(output_path)
     print(f"Saved image to {output_path}")
 
-    if args.log_metrics and torch.cuda.is_available():
-        peak_gb = torch.cuda.max_memory_allocated() / 1024**3
-        print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
     if args.log_metrics:
         print("Adapter metadata:", inference.adapter.metadata())
+        if torch.cuda.is_available():
+            peak_gb = torch.cuda.max_memory_allocated() / 1024**3
+            print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
 
 
 if __name__ == "__main__":
