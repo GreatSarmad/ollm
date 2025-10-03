@@ -37,6 +37,7 @@ class DiffusionModelConfig:
     enable_xformers: bool = False
     text_encoder_offload: str = "cpu"
     scheduler_override: Optional[str] = None
+    single_file: Optional[str] = None # Added for single-file support
 
 
 _DIFFUSION_MODELS: Dict[str, DiffusionModelConfig] = {
@@ -44,6 +45,7 @@ _DIFFUSION_MODELS: Dict[str, DiffusionModelConfig] = {
         model_ids=("sdxl-base-1.0",),
         repo_id="stabilityai/stable-diffusion-xl-base-1.0",
         variant="fp16",
+        single_file="sd_xl_base_1.0.safetensors", # Added single-file path
     ),
     "qwen-image-edit": DiffusionModelConfig(
         model_ids=("qwen-image-edit", "Qwen/Qwen-Image-Edit-2509"),
@@ -92,6 +94,8 @@ class DiffusionPipelineAdapter(PipelineAdapter):
         super().__init__(*args, **kwargs)
         self.requested_model_id = self.model_id
         self.config = self._resolve_config()
+        self.model_source_path: Optional[str] = None # Added for metadata tracking
+        self.model_source_kind = "unknown" # Added for metadata tracking
         if self.requested_model_id != self.cache_id:
             print(
                 f"Redirecting requested diffusion id '{self.requested_model_id}' to registered '{self.cache_id}'"
@@ -151,7 +155,21 @@ class DiffusionPipelineAdapter(PipelineAdapter):
     def prepare(self, models_dir: str, force_download: bool = False) -> str:
         os.makedirs(models_dir, exist_ok=True)
         model_dir = os.path.join(models_dir, self.cache_id)
+
+        # START single-file logic
+        if self.config.single_file and not force_download:
+            single_path = os.path.join(models_dir, self.config.single_file)
+            if os.path.isfile(single_path):
+                print(f"Using existing single-file weights at {single_path}")
+                self.model_source_path = single_path
+                self.model_source_kind = "single-file"
+                return single_path
+        # END single-file logic
+
         if os.path.exists(model_dir) and not force_download:
+            print(f"Using cached diffusion weights in {model_dir}")
+            self.model_source_path = model_dir # Added for metadata tracking
+            self.model_source_kind = "directory" # Added for metadata tracking
             return model_dir
 
         if os.path.exists(model_dir) and force_download:
@@ -159,6 +177,10 @@ class DiffusionPipelineAdapter(PipelineAdapter):
             import shutil
 
             shutil.rmtree(model_dir)
+
+        # Set model source path/kind before download for directory-based models
+        self.model_source_path = model_dir
+        self.model_source_kind = "directory"
 
         sanitized = self.cache_id.upper().replace("-", "_").replace("/", "_")
 
@@ -192,13 +214,22 @@ class DiffusionPipelineAdapter(PipelineAdapter):
         from diffusers import DiffusionPipeline
 
         print(f"Loading diffusion pipeline from {model_dir}")
-        pipeline = DiffusionPipeline.from_pretrained(
-            model_dir,
-            torch_dtype=self.config.torch_dtype,
-            use_safetensors=True,
-            variant=self.config.variant,
-        )
-
+        # START loading logic for single-file vs directory
+        if os.path.isdir(model_dir):
+            pipeline = DiffusionPipeline.from_pretrained(
+                model_dir,
+                torch_dtype=self.config.torch_dtype,
+                use_safetensors=True,
+                variant=self.config.variant,
+            )
+        else:
+            pipeline = DiffusionPipeline.from_single_file(
+                model_dir,
+                torch_dtype=self.config.torch_dtype,
+                use_safetensors=True,
+            )
+        # END loading logic
+        
         apply_diffusion_optimizations(pipeline, self.optimizations, self.device)
 
         self.model = pipeline
@@ -216,6 +247,11 @@ class DiffusionPipelineAdapter(PipelineAdapter):
 
     def metadata(self) -> Dict[str, str]:
         meta: Dict[str, str] = {"type": "diffusion", "model_id": self.cache_id}
+        # Added model path/source tracking
+        if self.model_source_path:
+            meta["model_path"] = self.model_source_path
+        meta["model_source"] = self.model_source_kind
+        
         meta.update({
             "sequential_cpu_offload": str(self.optimizations.sequential_cpu_offload),
             "attention_slicing": str(self.optimizations.attention_slicing),

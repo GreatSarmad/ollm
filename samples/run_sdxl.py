@@ -1,11 +1,4 @@
-"""Run FLUX.1-dev with the oLLM diffusion adapter on a small GPU.
-
-This sample mirrors the diagnostic workflow requested in Colab notebooks: it
-loads the official ``black-forest-labs/FLUX.1-dev`` checkpoint through the
-``Inference`` API, applies the sequential offload/tiling defaults, and prints
-peak VRAM usage plus adapter metadata so it is easy to verify that the
-oLLM-specific optimisations were active.
-"""
+"""SDXL sample that reuses existing single-file weights."""
 
 from __future__ import annotations
 
@@ -18,24 +11,24 @@ from ollm import Inference
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a FLUX.1-dev prompt with low VRAM")
-    parser.add_argument("--prompt", default="a serene mountain landscape at sunset", help="Prompt to render")
-    parser.add_argument("--output", default="flux_sample.png", help="Where to save the image")
+    parser = argparse.ArgumentParser(description="Render an SDXL prompt with low VRAM")
+    parser.add_argument("prompt", help="Text prompt to render")
+    parser.add_argument("--output", default="sdxl_sample.png", help="Where to save the image")
     parser.add_argument("--steps", type=int, default=20, help="Number of diffusion steps")
-    parser.add_argument("--guidance", type=float, default=5.5, help="Classifier-free guidance scale")
+    parser.add_argument("--guidance", type=float, default=5.0, help="Classifier-free guidance scale")
     parser.add_argument("--height", type=int, default=1024, help="Image height")
     parser.add_argument("--width", type=int, default=1024, help="Image width")
-    parser.add_argument("--models-dir", default="./models", help="Directory that already contains the FLUX.1-dev snapshot")
+    parser.add_argument("--models-dir", default="./models", help="Directory that already contains sd_xl_base_1.0.safetensors")
     parser.add_argument("--log-metrics", action="store_true", help="Print adapter metadata and CUDA peak memory")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
     inference = Inference(
-        "flux-1-dev",
+        "sdxl-base-1.0",
         device=device,
         logging=True,
     )
@@ -43,7 +36,7 @@ def main() -> None:
     if args.log_metrics and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
-    inference.ini_model(models_dir=args.models-dir)
+    inference.ini_model(models_dir=args.models_dir)
 
     result = inference.generate(
         prompt=args.prompt,
@@ -59,11 +52,11 @@ def main() -> None:
     result.images[0].save(output_path)
     print(f"Saved image to {output_path}")
 
+    if args.log_metrics and torch.cuda.is_available():
+        peak_gb = torch.cuda.max_memory_allocated() / 1024**3
+        print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
     if args.log_metrics:
         print("Adapter metadata:", inference.adapter.metadata())
-        if torch.cuda.is_available():
-            peak_gb = torch.cuda.max_memory_allocated() / 1024**3
-            print(f"Peak CUDA allocation: {peak_gb:.2f} GB")
 
 
 if __name__ == "__main__":
