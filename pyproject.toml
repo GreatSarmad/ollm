@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ollm"
 version = "0.5.0"
-description = "LLM Inference for Large-Context Offline Workloads"
+description = "Diffusion inference on small-VRAM GPUs"
 authors = [
   { name="Anuar Sharafudinov", email="anuarsh@ailabs.us" }
 ]
@@ -17,13 +17,23 @@ dependencies = [
     "torch>2.6.0", #tested: 2.8.0
     "transformers>=4.55.0", #tested: 4.55.4, 4.56.1
     "accelerate",
-    "flash-attn", #tested: 2.7.4.post1
-    "flash-linear-attention"
+    "diffusers>=0.30.0",
+    "safetensors",
+    "huggingface-hub>=0.23.0",
+    "pillow"
+]
+
+[project.optional-dependencies]
+diffusion = [
+    "bitsandbytes>=0.45.0; platform_system != 'Windows'",
+    "omegaconf>=2.3.0",
+    "scipy>=1.11.0",
+    "xformers>=0.0.26; platform_system == 'Linux'",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/Mega4alik/ollm"
-"Bug Tracker" = "https://github.com/Mega4alik/ollm/issues"
+"Homepage" = "https://github.com/GreatSarmad/ollm"
+"Bug Tracker" = "https://github.com/GreatSarmad/ollm/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

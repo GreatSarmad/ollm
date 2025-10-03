@@ -1,106 +1,111 @@
-<!-- markdownlint-disable MD001 MD041 -->
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://ollm.s3.us-east-1.amazonaws.com/files/logo2.png">
-    <img alt="vLLM" src="https://ollm.s3.us-east-1.amazonaws.com/files/logo2.png" width=52%>
-  </picture>
-</p>
+# oLLM Diffusion Toolkit (GreatSarmad fork)
 
-<h3 align="center">
-LLM Inference for Large-Context Offline Workloads
-</h3>
+This fork trims oLLM down to the pieces required for **running heavy diffusion checkpoints on small GPUs**.  The focus is on
+streaming **SDXL**, **FLUX.1-dev**, and **Qwen Image Edit 2509** with 8–12 GB of VRAM by leaning on sequential CPU offload,
+attention slicing, and VAE tiling.  No LLM samples or extra checkpoints are bundled here—the repository stays lightweight and
+uses the weights you already have on disk.
 
-oLLM is a lightweight Python library for large-context LLM inference, built on top of Huggingface Transformers and PyTorch. It enables running models like [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b), [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) or [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) on 100k context using ~$200 consumer GPU with 8GB VRAM.  No quantization is used—only fp16/bf16 precision. 
-<p dir="auto"><em>Latest updates (0.5.0)</em> 🔥</p>
-<ul dir="auto">
-<li>Multimodal <b>gemma3-12B</b> (image+text) added. <a href="https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py">[sample with image]</a> </li>
-<li>.safetensor files are now read without `mmap` so they no longer consume RAM through page cache</li>
-<li>qwen3-next-80B DiskCache support added</li>
-<li><b>qwen3-next-80B</b> (160GB model) added with <span style="color:blue">⚡️1tok/2s</span> throughput (our fastest model so far)</li>
-<li>gpt-oss-20B flash-attention-like implementation added to reduce VRAM usage </li>
-<li>gpt-oss-20B chunked MLP added to reduce VRAM usage </li>
-</ul>
+## Key features
 
----
-###  8GB Nvidia 3060 Ti Inference memory usage:
+- Automatic detection of local SDXL single-file weights (`sd_xl_base_1.0.safetensors`) so they are loaded without another
+  download.
+- Native FLUX.1-dev and Qwen Image Edit adapters that apply the lowest-VRAM presets (sequential offload, tiling, chunking) on
+  every run.
+- Dedicated demo scripts in `samples/` for each supported checkpoint plus a generic CLI (`samples/run_diffusion.py`) with VRAM
+  logging.
 
-| Model   | Weights | Context length | KV cache |  Baseline VRAM (no offload) | oLLM GPU VRAM | oLLM Disk (SSD) |
-| ------- | ------- | -------- | ------------- | ------------ | ---------------- | --------------- |
-| [qwen3-next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) | 160 GB (bf16) | 50k | 20 GB | ~190 GB   | ~7.5 GB | 180 GB  |
-| [gpt-oss-20B](https://huggingface.co/openai/gpt-oss-20b) | 13 GB (packed bf16) | 10k | 1.4 GB | ~40 GB   | ~7.3GB | 15 GB  |
-| [gemma3-12B](https://huggingface.co/google/gemma-3-12b-it)  | 25 GB (bf16) | 50k   | 18.5 GB          | ~45 GB   | ~6.7 GB       | 43 GB  |
-| [llama3-1B-chat](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct)  | 2 GB (fp16) | 100k   | 12.6 GB          | ~16 GB   | ~5 GB       | 15 GB  |
-| [llama3-3B-chat](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct)  | 7 GB (fp16) | 100k  | 34.1 GB | ~42 GB   | ~5.3 GB     | 42 GB |
-| [llama3-8B-chat](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)  | 16 GB (fp16) | 100k  | 52.4 GB | ~71 GB   | ~6.6 GB     | 69 GB  |
+## Supported checkpoints
 
-<small>By "Baseline" we mean typical inference without any offloading</small>
+| Adapter ID        | Weight layout expected in `./models`                               | Notes |
+| ----------------- | ------------------------------------------------------------------ | ----- |
+| `sdxl-base-1.0`   | `sd_xl_base_1.0.safetensors` (single file)                         | Loads via `DiffusionPipeline.from_single_file` |
+| `flux-1-dev`      | Diffusers directory (`model_index.json`, `unet/`, `vae/`, …)       | Works with locally extracted Hugging Face dump |
+| `qwen-image-edit` | Diffusers directory (downloaded on demand from Hugging Face/CivitAI) | Requires Hugging Face access token for gated repo |
 
-How do we achieve this:
-
-- Loading layer weights from SSD directly to GPU one by one
-- Offloading KV cache to SSD and loading back directly to GPU, no quantization or PagedAttention
-- Offloading layer weights to CPU if needed
-- FlashAttention-2 with online softmax. Full attention matrix is never materialized. 
-- Chunked MLP. Intermediate upper projection layers may get large, so we chunk MLP as well 
----
-Typical use cases include:
-- Analyze contracts, regulations, and compliance reports in one pass
-- Summarize or extract insights from massive patient histories or medical literature
-- Process very large log files or threat reports locally
-- Analyze historical chats to extract the most common issues/questions users have
----
-Supported **Nvidia GPUs**: Ampere (RTX 30xx, A30, A4000,  A10),  Ada Lovelace (RTX 40xx,  L4), Hopper (H100), and newer
-
-## Getting Started
-
-It is recommended to create venv or conda environment first
-```bash
-python3 -m venv ollm_env
-source ollm_env/bin/activate
-```
-
-Install oLLM with `pip install ollm` or [from source](https://github.com/Mega4alik/ollm):
+## 1. Install the toolkit
 
 ```bash
-git clone https://github.com/Mega4alik/ollm.git
+git clone https://github.com/GreatSarmad/ollm.git
 cd ollm
+
+# Base requirements (PyTorch 2.8 wheels are available on Colab and recent CUDA toolkits)
 pip install -e .
-pip install kvikio-cu{cuda_version} Ex, kvikio-cu12
+
+# Optional low-VRAM extras (xFormers, SciPy, etc.)
+pip install -e .[diffusion]
 ```
-> 💡 **Note**  
-> **qwen3-next** requires 4.57.0.dev version of transformers to be installed as `pip install git+https://github.com/huggingface/transformers.git`
 
+> **Tip:** Sequential CPU offload relies on `accelerate`.  You do *not* need `flash-attn` or other LLM-only packages—the
+> dependency list is trimmed to diffusion use cases.
 
-## Example
+## 2. Point the repo at your existing weights
 
-Code snippet sample 
+```
+ollm/
+├── models/
+│   ├── sd_xl_base_1.0.safetensors      # already downloaded single-file SDXL
+│   └── flux-1-dev/                     # extracted diffusers directory from Hugging Face
+│       ├── model_index.json
+│       ├── text_encoder/
+│       ├── tokenizer_2/
+│       └── ...
+```
+
+- **SDXL**: drop the 6.9 GB `sd_xl_base_1.0.safetensors` into `./models/`.  The adapter detects it automatically—no re-download
+  occurs unless you pass `force_download=True`.
+- **FLUX**: extract the `black-forest-labs/FLUX.1-dev` snapshot into `./models/flux-1-dev/` (matching the structure above).
+- **Qwen Image Edit**: weights are not bundled.  On first run the adapter downloads from Hugging Face (requires `huggingface_hub`
+  login) or from a CivitAI direct link provided via `download_url=` or the `OLLMDIFF_QWEN_IMAGE_EDIT_URL` environment variable.
+
+## 3. Run the focused demos
+
+All demos print adapter metadata and peak CUDA usage so you can confirm sequential offload is active.
 
 ```bash
-from ollm import Inference, file_get_contents, TextStreamer
-o = Inference("llama3-1B-chat", device="cuda:0", logging=True) #llama3-1B/3B/8B-chat, gpt-oss-20B, qwen3-next-80B
-o.ini_model(models_dir="./models/", force_download=False)
-o.offload_layers_to_cpu(layers_num=2) #(optional) offload some layers to CPU for speed boost
-past_key_values = o.DiskCache(cache_dir="./kv_cache/") #set None if context is small
-text_streamer = TextStreamer(o.tokenizer, skip_prompt=True, skip_special_tokens=False)
+# SDXL text-to-image using local single-file weights
+python samples/run_sdxl.py "a serene mountain landscape at sunset" --log-metrics
 
-messages = [{"role":"system", "content":"You are helpful AI assistant"}, {"role":"user", "content":"List planets"}]
-input_ids = o.tokenizer.apply_chat_template(messages, reasoning_effort="minimal", tokenize=True, add_generation_prompt=True, return_tensors="pt").to(o.device)
-outputs = o.model.generate(input_ids=input_ids,  past_key_values=past_key_values, max_new_tokens=500, streamer=text_streamer).cpu()
-answer = o.tokenizer.decode(outputs[0][input_ids.shape[-1]:], skip_special_tokens=False)
-print(answer)
+# FLUX.1-dev high-resolution render
+python samples/run_flux.py --log-metrics
+
+# Qwen Image Edit (requires your own source image)
+python samples/run_qwen_image_edit.py ./my_image.png "Replace the sky with a golden sunset" --log-metrics
 ```
-or run sample python script as `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python example.py` 
 
-**More samples**
-- [gemma3-12B image+text ](https://github.com/Mega4alik/ollm/blob/main/example_multimodality.py)
+By default the scripts look for weights under `./models`.  Use `--models-dir` to point elsewhere.
 
-## Roadmap
-*For visibility of what's coming next (subject to change)*
-- Voxtral-small-24B ASR model coming on Oct 5, Sun
-- Qwen3-VL or alternative vision model by Oct 12, Sun
-- Qwen3-Next MultiTokenPrediction in R&D
-- Efficient weight loading in R&D
+## 4. General-purpose CLI
 
+For custom pipelines or batch jobs call the generic driver:
 
-## Contact us
-If there’s a model you’d like to see supported, feel free to reach out at anuarsh@ailabs.us—I’ll do my best to make it happen.
+```bash
+python samples/run_diffusion.py qwen-image-edit "Refine the sky with a golden sunset" \
+    --image input.png --output sunset.png --num-steps 18 --guidance 4.5 \
+    --forward-chunk 2 --attention-slicing auto --log-metrics
+```
+
+The important switches map directly to `DiffusionOptimizationConfig`:
+
+- `--no-sequential-offload` / `--no-vae-tiling` / `--no-attention-slicing` toggle the low-VRAM presets.
+- `--text-encoder-on-gpu` keeps prompt encoders resident if you have VRAM to spare.
+- `--log-metrics` prints adapter metadata and the CUDA peak allocation right after the render.
+
+## 5. Hugging Face & CivitAI tips
+
+```python
+from huggingface_hub import login
+login(token="hf_your_token_here")
+```
+
+- Qwen Image Edit is a gated model; authenticate once per machine before calling the demos.
+- To use a private CivitAI mirror, set `export OLLMDIFF_QWEN_IMAGE_EDIT_URL="https://civitai.com/api/download/..."` before
+  running the scripts.  Archives are extracted into `./models/qwen-image-edit/` automatically.
+
+## Troubleshooting checklist
+
+1. **Model path mismatch** – call `Inference(...).adapter.metadata()` to verify which file/directory was used.
+2. **High VRAM usage** – ensure `--log-metrics` reports `sequential_cpu_offload=True`.  If not, double-check that `accelerate`
+   is installed and that you did not disable offload via flags.
+3. **Missing CUDA** – every script falls back to CPU, but renders will be slow.  Install the correct PyTorch build for your GPU.
+
+That’s it—you now have a lean toolkit for running SDXL, FLUX.1-dev, and Qwen Image Edit on hardware that normally tops out at 8–12 GB.
